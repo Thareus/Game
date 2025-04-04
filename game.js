@@ -93,8 +93,113 @@ function init() {
     document.addEventListener('keydown', (event) => { keys[event.key.toLowerCase()] = true; });
     document.addEventListener('keyup', (event) => { keys[event.key.toLowerCase()] = false; });
 
+    // Camera Control Listeners
+    renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
+    renderer.domElement.addEventListener('mousedown', onMouseDown, false);
+    renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+    renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault()); // Prevent right-click menu
+
     // Start animation loop
     animate();
+}
+
+// --- Camera Control Handlers ---
+
+function onMouseWheel(event) {
+    event.preventDefault(); // Prevent default page scroll
+
+    // Adjust zoom factor smoothly
+    const zoomAmount = event.deltaY * 0.001;
+    camera.zoom *= (1 - zoomAmount); // Multiply for smooth zoom feel
+    camera.zoom = Math.max(minZoom, Math.min(maxZoom, camera.zoom)); // Clamp zoom
+
+    camera.updateProjectionMatrix(); // IMPORTANT! Update projection matrix after zoom change
+}
+
+function onMouseDown(event) {
+    // event.button: 0=left, 1=middle, 2=right
+    if (event.button === 2) { // Right mouse button for panning
+        isPanning = true;
+    } else if (event.button === 1 || (event.button === 0 && (keys['shift'] || keys['control']))) { // Middle button OR (Left button + Shift/Ctrl) for rotating
+        isRotating = true;
+    }
+    previousMousePosition.x = event.clientX;
+    previousMousePosition.y = event.clientY;
+}
+
+function onMouseMove(event) {
+    const deltaX = event.clientX - previousMousePosition.x;
+    const deltaY = event.clientY - previousMousePosition.y;
+
+    if (isPanning) {
+        // Calculate pan speed relative to current view size
+        const panFactorX = (camera.right - camera.left) / camera.zoom / renderer.domElement.clientWidth;
+        const panFactorY = (camera.top - camera.bottom) / camera.zoom / renderer.domElement.clientHeight;
+
+        // Get camera's local coordinate axes projected onto the ground plane (XZ)
+        const right = new THREE.Vector3();
+        camera.getWorldDirection(right).cross(camera.up).normalize(); // Camera's local X (Right)
+
+        const forward = new THREE.Vector3(); // Direction camera is looking, projected onto ground
+        camera.getWorldDirection(forward);
+        forward.y = 0;
+        forward.normalize();
+
+        // Calculate the effective "up" direction on screen projected onto ground
+        const upOnGround = new THREE.Vector3().crossVectors(right, new THREE.Vector3(0, 1, 0)).normalize();
+
+        // Combine movements along these projected axes
+        const moveX = right.multiplyScalar(-deltaX * panFactorX);
+        const moveY = upOnGround.multiplyScalar(deltaY * panFactorY); // Use upOnGround for Y screen movement
+        const panOffset = moveX.add(moveY);
+
+        // Apply the pan offset to both camera position and target
+        camera.position.add(panOffset);
+        cameraTarget.add(panOffset);
+
+        camera.updateMatrixWorld(); // Update camera matrix if needed elsewhere instantly
+    }
+    else if (isRotating) {
+        const rotationFactor = 0.005; // Adjust sensitivity
+
+        // Calculate vector from target to camera
+        const offset = camera.position.clone().sub(cameraTarget);
+
+        // Azimuthal rotation (around Y axis) based on deltaX
+        const thetaDelta = -deltaX * rotationFactor;
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), thetaDelta);
+
+        // Polar rotation (around camera's right axis) based on deltaY
+        const phiDelta = -deltaY * rotationFactor;
+        const rightAxis = new THREE.Vector3();
+        camera.getWorldDirection(rightAxis).cross(camera.up).normalize(); // Get camera's right axis
+
+        // Apply polar rotation and clamp to prevent flipping over
+        const currentPhi = Math.acos(offset.clone().normalize().y); // Approximate current polar angle
+        const maxPhi = Math.PI - 0.1; // Just shy of straight down
+        const minPhi = 0.1;        // Just shy of straight up
+        const newPhi = currentPhi + phiDelta;
+
+        if (newPhi > minPhi && newPhi < maxPhi) {
+             offset.applyAxisAngle(rightAxis, phiDelta);
+        }
+
+        // Update camera position
+        camera.position.copy(cameraTarget).add(offset);
+
+        // Keep looking at the target
+        camera.lookAt(cameraTarget);
+        camera.updateMatrixWorld();
+    }
+
+    previousMousePosition.x = event.clientX;
+    previousMousePosition.y = event.clientY;
+}
+
+function onMouseUp(event) {
+    isPanning = false;
+    isRotating = false;
 }
 
 // --- Animation & Updates ---
@@ -147,20 +252,26 @@ function handleInput(delta) {
         player.position.x = Math.max(-halfWorld, Math.min(halfWorld, player.position.x));
         player.position.z = Math.max(-halfWorld, Math.min(halfWorld, player.position.z));
     }
+    if (!isRotating) { // Avoid conflicting lookAt calls
+        camera.lookAt(cameraTarget);
+    }
 }
 
 // --- Utility ---
 
 function onWindowResize() {
     const aspect = window.innerWidth / window.innerHeight;
-    const frustumSize = 25;
 
-    camera.left = frustumSize * aspect / -2;
-    camera.right = frustumSize * aspect / 2;
-    camera.top = frustumSize / 2;
-    camera.bottom = frustumSize / -2;
+    // Update orthographic camera frustum based on current zoom
+    const currentHeight = (camera.top - camera.bottom) / camera.zoom; // Effective height
+    const currentWidth = currentHeight * aspect;
+
+    camera.left = -currentWidth / 2;
+    camera.right = currentWidth / 2;
+    camera.top = currentHeight / 2;
+    camera.bottom = -currentHeight / 2;
+
     camera.updateProjectionMatrix();
-
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
