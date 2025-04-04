@@ -1,23 +1,36 @@
 import * as THREE from 'three';
+// Import the refactored functions
+import { createPlayer } from './assets.js';
+import { populateWorld } from './world.js';
 
 let scene, camera, renderer, player, clock;
 const keys = {}; // Keep track of pressed keys
 const moveSpeed = 5;
-const worldSize = 50; // Size of the area where assets are placed
+const worldSize = 150; // Size of the area where assets are placed
+
+// Camera control variables
+let cameraTarget = new THREE.Vector3(0, 0, 0); // Point camera looks at
+let isPanning = false;
+let isRotating = false;
+let previousMousePosition = { x: 0, y: 0 };
+const minZoom = 0.3; // Min camera zoom factor
+const maxZoom = 5.0; // Max camera zoom factor
+const panSpeed = 0.5;
+const rotateSpeed = 0.01; // Radians per pixel
 
 // --- Initialization ---
 function init() {
     // Scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB); // Sky blue
-    scene.fog = new THREE.Fog(0x87CEEB, worldSize * 0.8, worldSize * 1.5); // Add fog for depth
+    scene.fog = new THREE.Fog(0x87CEEB, worldSize * 0.6, worldSize * 1.2); // Add fog for depth
 
     // Clock for delta time
     clock = new THREE.Clock();
 
     // Camera (Orthographic for the flat/isometric look)
     const aspect = window.innerWidth / window.innerHeight;
-    const frustumSize = 25; // Controls the zoom level
+    const frustumSize = 40; // Controls the zoom level
     camera = new THREE.OrthographicCamera(
         frustumSize * aspect / -2,
         frustumSize * aspect / 2,
@@ -26,7 +39,9 @@ function init() {
         0.1,
         1000
     );
-    camera.position.set(15, 15, 15); // Angled top-down view
+    camera.position.set(40, 40, 40); // Angled top-down view
+    camera.zoom = 1.0; // Default zoom level
+    camera.updateProjectionMatrix();
     camera.lookAt(0, 0, 0);
     scene.add(camera);
 
@@ -38,46 +53,32 @@ function init() {
     document.body.appendChild(renderer.domElement);
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0xaaaaaa); // Soft ambient light
+    const ambientLight = new THREE.AmbientLight(0xaaaaaa, 0.8); // Slightly less intensity
     scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    directionalLight.position.set(10, 20, 5);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.8); // Slightly more intensity
+    directionalLight.position.set(worldSize * 0.2, worldSize * 0.5, worldSize * 0.1); // Position relative to world size
     directionalLight.castShadow = true;
-    // Configure shadow properties for performance/quality
-    directionalLight.shadow.mapSize.width = 1024;
-    directionalLight.shadow.mapSize.height = 1024;
+    directionalLight.shadow.mapSize.width = 2048; // Higher res for larger area
+    directionalLight.shadow.mapSize.height = 2048;
     directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far = 50;
-    directionalLight.shadow.camera.left = -worldSize / 2;
-    directionalLight.shadow.camera.right = worldSize / 2;
-    directionalLight.shadow.camera.top = worldSize / 2;
-    directionalLight.shadow.camera.bottom = -worldSize / 2;
+    directionalLight.shadow.camera.far = worldSize * 1.5; // Increase shadow camera range
+    // Adjust shadow frustum to cover more area (might need tweaking)
+    const shadowCamSize = worldSize * 0.7;
+    directionalLight.shadow.camera.left = -shadowCamSize;
+    directionalLight.shadow.camera.right = shadowCamSize;
+    directionalLight.shadow.camera.top = shadowCamSize;
+    directionalLight.shadow.camera.bottom = -shadowCamSize;
     scene.add(directionalLight);
-    // Optional: Add a light helper
-    // const lightHelper = new THREE.DirectionalLightHelper(directionalLight, 5);
-    // scene.add(lightHelper);
-    // const shadowHelper = new THREE.CameraHelper(directionalLight.shadow.camera);
-    // scene.add(shadowHelper);
-
+    // scene.add(new THREE.CameraHelper(directionalLight.shadow.camera)); // Optional: Debug shadow camera
 
     // Ground
     const groundGeometry = new THREE.PlaneGeometry(worldSize, worldSize);
-    const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x90ee90 }); // Light green
+    const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x90ee90 });
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2; // Rotate to be flat
+    ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
-
-    // Path
-    const pathWidth = 3;
-    const pathGeometry = new THREE.PlaneGeometry(worldSize, pathWidth);
-    const pathMaterial = new THREE.MeshLambertMaterial({ color: 0xd2b48c }); // Tan
-    const path = new THREE.Mesh(pathGeometry, pathMaterial);
-    path.rotation.x = -Math.PI / 2;
-    path.position.y = 0.01; // Slightly above ground to prevent z-fighting
-    path.receiveShadow = true;
-    scene.add(path);
 
     // Player Character Placeholder
     player = createPlayer();
@@ -85,7 +86,7 @@ function init() {
     scene.add(player);
 
     // Procedural Asset Placement
-    populateWorld();
+    populateWorld(scene, worldSize);
 
     // Event Listeners
     window.addEventListener('resize', onWindowResize, false);
